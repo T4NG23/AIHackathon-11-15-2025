@@ -1,0 +1,482 @@
+{% extends "base.html" %}
+
+{% block title %}DormDealz{% endblock %}
+
+{% block content %}
+<div class="marketplace-container">
+    <div class="marketplace-sidebar">
+        <div class="sidebar-section">
+            <div class="sidebar-header" onclick="toggleSection('categories')">
+                <h3>Categories</h3>
+                <span class="toggle-icon" id="categories-icon">▼</span>
+            </div>
+            <div class="category-list" id="categories-content">
+                <a href="#" class="category-item" data-category="">All Categories</a>
+                <a href="#" class="category-item" data-category="textbooks">Textbooks</a>
+                <a href="#" class="category-item" data-category="supplies">School Supplies</a>
+                <a href="#" class="category-item" data-category="electronics">Academic Electronics</a>
+                <a href="#" class="category-item" data-category="class-required">Class-Required Items</a>
+                <a href="#" class="category-item" data-category="dorm">Dorm & Student Life</a>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-header" onclick="toggleSection('filters')">
+                <h3>Filters</h3>
+                <span class="toggle-icon" id="filters-icon">▼</span>
+            </div>
+            <div class="filters-content" id="filters-content">
+                <div class="filter-group">
+                    <label>Condition</label>
+                    <select id="filterCondition" class="filter-select">
+                        <option value="">All Conditions</option>
+                        <option value="New">New</option>
+                        <option value="Like New">Like New</option>
+                        <option value="Good">Good</option>
+                        <option value="Fair">Fair</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Price Range</label>
+                    <div class="price-range">
+                        <input type="number" id="minPrice" placeholder="Min" class="price-input" min="0" step="0.01">
+                        <span>to</span>
+                        <input type="number" id="maxPrice" placeholder="Max" class="price-input" min="0" step="0.01">
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <label>Class Code</label>
+                    <input type="text" id="filterClass" placeholder="e.g., EECS 183" class="filter-input">
+                </div>
+                <button class="btn btn-primary btn-small btn-full" onclick="applyFilters()">Apply Filters</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="marketplace-main">
+        <div class="marketplace-header">
+            <div class="search-bar">
+                <input type="text" id="searchInput" placeholder="Search for textbooks, supplies, electronics..." class="search-input">
+                <button class="btn-search" onclick="performSearch()">Search</button>
+            </div>
+            <div class="view-options">
+                <button class="view-btn active" data-view="grid" onclick="setView('grid')">Grid</button>
+                <button class="view-btn" data-view="list" onclick="setView('list')">List</button>
+            </div>
+        </div>
+
+        <div id="listingsContainer" class="listings-grid">
+            <!-- Listings will be loaded here -->
+        </div>
+
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <p>No listings found. Try adjusting your filters or <a href="/sell">create a listing</a>.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentUser = null;
+let currentView = 'grid';
+let currentFilters = {
+    category: '',
+    condition: '',
+    min_price: '',
+    max_price: '',
+    class_code: '',
+    search: ''
+};
+
+// Check if user is logged in
+function checkAuth() {
+    const userEmail = localStorage.getItem('userEmail');
+    if (userEmail) {
+        currentUser = { email: userEmail };
+        updateAuthUI();
+    }
+}
+
+function updateAuthUI() {
+    if (currentUser) {
+        const loginBtn = document.querySelector('.btn-login');
+        if (loginBtn) {
+            const nickname = localStorage.getItem('userNickname') || currentUser.email.split('@')[0];
+            loginBtn.textContent = nickname;
+        }
+    }
+}
+
+function showLoginModal() {
+    const modal = document.getElementById('loginModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        // Generate new CAPTCHA when modal opens
+        setTimeout(() => {
+            if (typeof generateCaptcha === 'function') {
+                generateCaptcha();
+            }
+        }, 100);
+    }
+}
+
+function closeLoginModal() {
+    const modal = document.getElementById('loginModal');
+    if (modal) {
+        modal.style.display = 'none';
+        // Reset form
+        const form = document.getElementById('loginForm');
+        if (form) {
+            form.reset();
+            const errorDiv = document.getElementById('loginError');
+            if (errorDiv) {
+                errorDiv.style.display = 'none';
+            }
+        }
+    }
+}
+
+// Login form is handled in main.js
+
+// Load listings
+async function loadListings() {
+    try {
+        const params = new URLSearchParams();
+        if (currentFilters.category) params.append('category', currentFilters.category);
+        if (currentFilters.condition) params.append('condition', currentFilters.condition);
+        if (currentFilters.min_price) params.append('min_price', currentFilters.min_price);
+        if (currentFilters.max_price) params.append('max_price', currentFilters.max_price);
+        if (currentFilters.class_code) params.append('class', currentFilters.class_code);
+        if (currentFilters.search) params.append('search', currentFilters.search);
+        params.append('page', '{{ page }}');
+        
+        const response = await fetch(`/api/marketplace/listings?${params}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            let listings = data.listings;
+            
+            // Filter to only saved listings if on the saved page
+            if ('{{ page }}' === 'saved' && currentUser) {
+                const bookmarks = JSON.parse(localStorage.getItem(`bookmarks_${currentUser.email}`) || '[]');
+                listings = listings.filter(listing => bookmarks.includes(listing.id));
+            }
+            
+            // Filter to only user's own listings if on my-listings page
+            if ('{{ page }}' === 'my-listings' && currentUser) {
+                listings = listings.filter(listing => listing.seller_email === currentUser.email);
+            }
+            
+            renderListings(listings);
+        }
+    } catch (error) {
+        console.error('Error loading listings:', error);
+    }
+}
+
+function renderListings(listings) {
+    const container = document.getElementById('listingsContainer');
+    const emptyState = document.getElementById('emptyState');
+    
+    if (listings.length === 0) {
+        container.innerHTML = '';
+        const isOnSavedPage = '{{ page }}' === 'saved';
+        const isOnMyListingsPage = '{{ page }}' === 'my-listings';
+        
+        if (isOnSavedPage) {
+            emptyState.innerHTML = `
+                <h3>Your Collection is Empty</h3>
+                <p>Start favoriting listings to build your personalized collection. Click the star icon on any item to save it here for later!</p>
+            `;
+        } else if (isOnMyListingsPage) {
+            emptyState.innerHTML = `
+                <h3>You Haven't Posted Anything Yet</h3>
+                <p>Start creating listings to share items with the Lehigh community. Click the "Sell" button to post your first item!</p>
+            `;
+        } else {
+            emptyState.innerHTML = '<p>No listings found. Try adjusting your filters or <a href="/sell">create a listing</a>.</p>';
+        }
+        emptyState.style.display = 'block';
+        return;
+    }
+    
+    emptyState.style.display = 'none';
+    
+    if (currentView === 'grid') {
+        container.className = 'listings-grid';
+        container.innerHTML = listings.map(listing => createListingCard(listing)).join('');
+    } else {
+        container.className = 'listings-list';
+        container.innerHTML = listings.map(listing => createListingRow(listing)).join('');
+    }
+}
+
+function createListingCard(listing) {
+    const categoryName = getCategoryName(listing.category);
+    const classTags = listing.class_tags || [];
+    const isBookmarkedClass = isBookmarked(listing.id) ? 'saved' : '';
+    
+    return `
+        <div class="listing-card" onclick="viewListing('${listing.id}')">
+            <div class="listing-image">
+                ${listing.image_url ? `<img src="${listing.image_url}" alt="${listing.title}" loading="lazy">` : `<div class="image-placeholder">${categoryName}</div>`}
+                <div class="price-badge">$${parseFloat(listing.price).toFixed(2)}</div>
+                <button class="bookmark-btn ${isBookmarkedClass}" onclick="event.stopPropagation(); toggleBookmark('${listing.id}')" title="Save this listing">
+                    ${isBookmarked(listing.id) ? '★' : '☆'}
+                </button>
+            </div>
+            <div class="listing-content">
+                <div class="listing-header">
+                    <h3 class="listing-title">${listing.title}</h3>
+                </div>
+                <div class="listing-meta">
+                    <span class="listing-category">${categoryName}</span>
+                    <span class="listing-condition">${listing.condition}</span>
+                </div>
+                ${classTags.length > 0 ? `<div class="listing-classes">${classTags.map(c => `<span class="class-tag">${c}</span>`).join('')}</div>` : ''}
+                <p class="listing-description">${truncate(listing.description || '', 100)}</p>
+                <div class="listing-footer">
+                    <span class="listing-seller">${listing.seller_name || 'Anonymous'}</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function createListingRow(listing) {
+    const categoryName = getCategoryName(listing.category);
+    const isBookmarkedClass = isBookmarked(listing.id) ? 'saved' : '';
+    
+    return `
+        <div class="listing-row" onclick="viewListing('${listing.id}')">
+            <div class="listing-image-small">
+                ${listing.image_url ? `<img src="${listing.image_url}" alt="${listing.title}" loading="lazy">` : `<div class="image-placeholder">${categoryName}</div>`}
+            </div>
+            <div class="listing-details">
+                <div class="listing-header">
+                    <h3 class="listing-title">${listing.title}</h3>
+                    <span class="listing-price">$${parseFloat(listing.price).toFixed(2)}</span>
+                </div>
+                <div class="listing-meta">
+                    <span class="listing-category">${categoryName}</span>
+                    <span class="listing-condition">${listing.condition}</span>
+                </div>
+                <p class="listing-description">${listing.description || ''}</p>
+            </div>
+            <div class="listing-actions">
+                <button class="bookmark-btn ${isBookmarkedClass}" onclick="event.stopPropagation(); toggleBookmark('${listing.id}')" title="Save this listing">
+                    ${isBookmarked(listing.id) ? '★' : '☆'}
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function getCategoryName(category) {
+    const categories = {
+        'textbooks': 'Textbooks',
+        'supplies': 'School Supplies',
+        'electronics': 'Academic Electronics',
+        'class-required': 'Class-Required',
+        'dorm': 'Dorm & Student Life'
+    };
+    return categories[category] || category;
+}
+
+function truncate(str, length) {
+    return str.length > length ? str.substring(0, length) + '...' : str;
+}
+
+function viewListing(listingId) {
+    window.location.href = `/listing/${listingId}`;
+}
+
+async function toggleBookmark(listingId) {
+    if (!currentUser) {
+        showLoginModal();
+        return;
+    }
+    
+    try {
+        // Get current bookmarks from localStorage
+        const bookmarks = JSON.parse(localStorage.getItem(`bookmarks_${currentUser.email}`) || '[]');
+        const index = bookmarks.indexOf(listingId);
+        
+        if (index > -1) {
+            // Remove bookmark
+            bookmarks.splice(index, 1);
+        } else {
+            // Add bookmark
+            bookmarks.push(listingId);
+        }
+        
+        // Save updated bookmarks to localStorage
+        localStorage.setItem(`bookmarks_${currentUser.email}`, JSON.stringify(bookmarks));
+        
+        // Also sync with server
+        const response = await fetch('/api/marketplace/bookmarks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                listing_id: listingId,
+                email: currentUser.email
+            })
+        });
+        
+        // Reload listings to update UI
+        loadListings();
+    } catch (error) {
+        console.error('Error toggling bookmark:', error);
+    }
+}
+
+function isBookmarked(listingId) {
+    if (!currentUser) return false;
+    const bookmarks = JSON.parse(localStorage.getItem(`bookmarks_${currentUser.email}`) || '[]');
+    return bookmarks.includes(listingId);
+}
+
+function setView(view) {
+    currentView = view;
+    document.querySelectorAll('.view-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === view);
+    });
+    loadListings();
+}
+
+function applyFilters() {
+    const minPrice = parseFloat(document.getElementById('minPrice').value) || '';
+    const maxPrice = parseFloat(document.getElementById('maxPrice').value) || '';
+    
+    // Validate price range - ensure min doesn't exceed max
+    if (minPrice && maxPrice && minPrice > maxPrice) {
+        alert('Minimum price cannot be greater than maximum price');
+        return;
+    }
+    
+    currentFilters.category = document.querySelector('.category-item.active')?.dataset.category || '';
+    currentFilters.condition = document.getElementById('filterCondition').value;
+    currentFilters.min_price = minPrice;
+    currentFilters.max_price = maxPrice;
+    currentFilters.class_code = document.getElementById('filterClass').value;
+    loadListings();
+}
+
+function performSearch() {
+    currentFilters.search = document.getElementById('searchInput').value;
+    loadListings();
+}
+
+// Category selection
+document.querySelectorAll('.category-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+        e.preventDefault();
+        document.querySelectorAll('.category-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        currentFilters.category = item.dataset.category;
+        loadListings();
+    });
+});
+
+// Auto-apply filters on change
+document.getElementById('filterCondition').addEventListener('change', () => {
+    currentFilters.condition = document.getElementById('filterCondition').value;
+    loadListings();
+});
+
+document.getElementById('filterClass').addEventListener('input', debounce(() => {
+    currentFilters.class_code = document.getElementById('filterClass').value;
+    loadListings();
+}, 500));
+
+// Debounce function for search/filter inputs
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Price range validation - keep values in valid range and auto-apply
+document.getElementById('minPrice').addEventListener('input', debounce((e) => {
+    const minPrice = parseFloat(e.target.value) || 0;
+    const maxInput = document.getElementById('maxPrice');
+    const maxPrice = parseFloat(maxInput.value) || Infinity;
+    
+    if (minPrice > maxPrice && maxInput.value !== '') {
+        e.target.value = maxPrice;
+    }
+    if (minPrice < 0) {
+        e.target.value = '';
+    }
+    currentFilters.min_price = parseFloat(e.target.value) || '';
+    loadListings();
+}, 500));
+
+document.getElementById('maxPrice').addEventListener('input', debounce((e) => {
+    const maxPrice = parseFloat(e.target.value) || Infinity;
+    const minInput = document.getElementById('minPrice');
+    const minPrice = parseFloat(minInput.value) || 0;
+    
+    if (maxPrice < minPrice && minInput.value !== '') {
+        e.target.value = minPrice;
+    }
+    if (maxPrice < 0) {
+        e.target.value = '';
+    }
+    currentFilters.max_price = parseFloat(e.target.value) || '';
+    loadListings();
+}, 500));
+
+// Enter key search
+document.getElementById('searchInput').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        performSearch();
+    }
+});
+
+// Auto-search as user types with debounce
+document.getElementById('searchInput').addEventListener('input', debounce(() => {
+    currentFilters.search = document.getElementById('searchInput').value;
+    loadListings();
+}, 500));
+
+// Initialize
+checkAuth();
+// Set first category (All Categories) as active by default
+document.querySelector('.category-item[data-category=""]')?.classList.add('active');
+loadListings();
+
+// Toggle sidebar sections
+function toggleSection(sectionId) {
+    const content = document.getElementById(`${sectionId}-content`);
+    const icon = document.getElementById(`${sectionId}-icon`);
+    
+    if (content.style.display === 'none') {
+        content.style.display = 'flex';
+        icon.textContent = '▼';
+    } else {
+        content.style.display = 'none';
+        icon.textContent = '▶';
+    }
+}
+
+// Update login button on page load if user is logged in
+document.addEventListener('DOMContentLoaded', function() {
+    const userEmail = localStorage.getItem('userEmail');
+    const userNickname = localStorage.getItem('userNickname');
+    if (userEmail && userNickname) {
+        const loginBtn = document.querySelector('.btn-login');
+        if (loginBtn) {
+            loginBtn.textContent = userNickname;
+        }
+    }
+});
+</script>
+{% endblock %}

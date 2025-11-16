@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}Hierarchical Book Summarizer{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="container">
+        <h1>Hierarchical Book Summarizer</h1>
+        <p>Upload a book and get a comprehensive summary using hierarchical summarization techniques</p>
+    </div>
+</div>
+
+<div class="container">
+    <div class="upload-section">
+        <div class="upload-card">
+            <h2>Upload Book</h2>
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="file-upload-area" id="fileUploadArea">
+                    <input type="file" id="fileInput" name="file" accept=".txt,.pdf" style="display: none;">
+                    <div class="upload-icon">📄</div>
+                    <p>Drag and drop your book file here, or <a href="#" onclick="document.getElementById('fileInput').click(); return false;">browse</a></p>
+                    <small>Supported formats: .txt, .pdf (Max 16MB)</small>
+                </div>
+                <div id="fileInfo" style="display: none; margin-top: 1rem;">
+                    <p><strong>Selected:</strong> <span id="fileName"></span></p>
+                </div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 1rem; display: none;" id="uploadBtn">
+                    Upload File
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div id="summarizeSection" style="display: none;" class="summarize-section">
+        <div class="action-card">
+            <h3>Ready to Summarize</h3>
+            <p id="uploadedFileName"></p>
+            <button id="summarizeBtn" class="btn btn-primary btn-large">
+                <span class="btn-text">Generate Summary</span>
+                <span class="btn-loader" style="display: none;">Processing...</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="resultSection" class="result-section" style="display: none;">
+        <div class="result-header">
+            <h2>Book Summary</h2>
+            <div class="result-stats" id="resultStats"></div>
+        </div>
+        <div class="summary-content">
+            <div class="summary-section">
+                <h3>Comprehensive Summary</h3>
+                <div id="finalSummary" class="summary-text"></div>
+            </div>
+            <div class="summary-section" id="chaptersSection" style="display: none;">
+                <h3>Chapter Summaries</h3>
+                <div id="chapterSummaries"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let uploadedFilename = null;
+
+document.getElementById('fileInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('fileInfo').style.display = 'block';
+        document.getElementById('uploadBtn').style.display = 'block';
+    }
+});
+
+document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData();
+    const fileInput = document.getElementById('fileInput');
+    
+    if (!fileInput.files[0]) {
+        alert('Please select a file');
+        return;
+    }
+    
+    formData.append('file', fileInput.files[0]);
+    
+    const uploadBtn = document.getElementById('uploadBtn');
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Uploading...';
+    
+    try {
+        const response = await fetch('/api/summarizer/upload', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            uploadedFilename = data.filename;
+            document.getElementById('uploadedFileName').textContent = `File: ${data.filename}`;
+            document.getElementById('summarizeSection').style.display = 'block';
+            document.getElementById('summarizeSection').scrollIntoView({ behavior: 'smooth' });
+        } else {
+            alert('Error: ' + (data.error || 'Upload failed'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'Upload File';
+    }
+});
+
+document.getElementById('summarizeBtn').addEventListener('click', async () => {
+    if (!uploadedFilename) {
+        alert('Please upload a file first');
+        return;
+    }
+    
+    const btn = document.getElementById('summarizeBtn');
+    const btnText = btn.querySelector('.btn-text');
+    const btnLoader = btn.querySelector('.btn-loader');
+    
+    btnText.style.display = 'none';
+    btnLoader.style.display = 'inline';
+    btn.disabled = true;
+    
+    try {
+        const response = await fetch('/api/summarizer/summarize', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ filename: uploadedFilename })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('finalSummary').innerHTML = marked.parse(data.summary);
+            
+            if (data.chapters && data.chapters.length > 0) {
+                let chaptersHtml = '';
+                data.chapters.forEach((ch, idx) => {
+                    chaptersHtml += `
+                        <div class="chapter-summary">
+                            <h4>Chapter ${ch.chapter_number}</h4>
+                            <p>${marked.parse(ch.summary)}</p>
+                        </div>
+                    `;
+                });
+                document.getElementById('chapterSummaries').innerHTML = chaptersHtml;
+                document.getElementById('chaptersSection').style.display = 'block';
+            }
+            
+            document.getElementById('resultStats').innerHTML = `
+                <span>Total Chapters: ${data.chapters?.length || 0}</span>
+            `;
+            
+            document.getElementById('resultSection').style.display = 'block';
+            document.getElementById('resultSection').scrollIntoView({ behavior: 'smooth' });
+        } else {
+            alert('Error: ' + (data.error || 'Summarization failed'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        btnText.style.display = 'inline';
+        btnLoader.style.display = 'none';
+        btn.disabled = false;
+    }
+});
+
+// Drag and drop
+const fileUploadArea = document.getElementById('fileUploadArea');
+const fileInput = document.getElementById('fileInput');
+
+fileUploadArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    fileUploadArea.style.borderColor = '#4CAF50';
+});
+
+fileUploadArea.addEventListener('dragleave', () => {
+    fileUploadArea.style.borderColor = '#ddd';
+});
+
+fileUploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    fileUploadArea.style.borderColor = '#ddd';
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        fileInput.files = files;
+        document.getElementById('fileName').textContent = files[0].name;
+        document.getElementById('fileInfo').style.display = 'block';
+        document.getElementById('uploadBtn').style.display = 'block';
+    }
+});
+
+fileUploadArea.addEventListener('click', () => {
+    fileInput.click();
+});
+</script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+{% endblock %}
+

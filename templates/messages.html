@@ -1,0 +1,960 @@
+{% extends "base.html" %}
+
+{% block title %}Messages{% endblock %}
+
+{% block content %}
+<div class="messages-page">
+    <div class="messages-container">
+        <div class="messages-header">
+            <h1>Messages</h1>
+        </div>
+        <div id="conversationsList" class="conversations-list">
+            <div class="loading">Loading conversations...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Chat Modal (same as listing_detail) -->
+<div id="chatModal" class="chat-modal">
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="chat-header-info">
+                <div class="chat-recipient-name" id="chatRecipientName"></div>
+                <div class="chat-listing-title" id="chatListingTitle"></div>
+            </div>
+            <div class="chat-header-actions">
+                <div class="chat-menu">
+                    <button class="chat-menu-btn" id="chatMenuBtn">
+                        <span>⋮</span>
+                    </button>
+                    <div class="chat-menu-dropdown" id="chatMenuDropdown" style="display: none;">
+                        <button id="chatBlockBtn">Block User</button>
+                        <button id="chatReportBtn">Report User</button>
+                    </div>
+                </div>
+                <button class="chat-close" id="chatClose">&times;</button>
+            </div>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="loading">Loading messages...</div>
+        </div>
+        <div class="chat-input-area">
+            <textarea id="chatInput" placeholder="Type a message..." rows="2"></textarea>
+            <button id="sendMessage" class="btn btn-primary">Send</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentUser = null;
+
+// Check if user is logged in
+function checkAuth() {
+    const userEmail = localStorage.getItem('userEmail');
+    if (userEmail) {
+        currentUser = { email: userEmail };
+        updateAuthUI();
+        loadConversationsList();
+    } else {
+        document.getElementById('conversationsList').innerHTML = '<div class="no-conversations">Please log in to view messages.</div>';
+    }
+}
+
+function updateAuthUI() {
+    if (currentUser) {
+        const loginBtn = document.querySelector('.btn-login');
+        if (loginBtn) {
+            const nickname = localStorage.getItem('userNickname') || currentUser.email.split('@')[0];
+            loginBtn.textContent = nickname;
+        }
+    }
+}
+
+async function loadConversationsList() {
+    try {
+        const res = await fetch('/api/messages/conversations', {
+            headers: { 'X-User-Email': currentUser.email }
+        });
+        const conversations = await res.json();
+        
+        const container = document.getElementById('conversationsList');
+        
+        if (!conversations || conversations.length === 0) {
+            container.innerHTML = '<div class="no-conversations">No conversations yet. Start chatting with sellers!</div>';
+            return;
+        }
+        
+        container.innerHTML = conversations.map(conv => {
+            const time = new Date(conv.last_message_time).toLocaleString([], { 
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
+            });
+            
+            return `
+                <div class="conversation-item" data-conv-id="${conv.id}" data-recipient="${conv.other_user.email}" data-listing-id="${conv.listing ? conv.listing.id : ''}">
+                    <div class="conversation-avatar">
+                        ${conv.listing && conv.listing.image_url ? 
+                            `<img src="${conv.listing.image_url}" alt="listing">` : 
+                            `<div class="avatar-placeholder">${conv.other_user.nickname.charAt(0).toUpperCase()}</div>`
+                        }
+                    </div>
+                    <div class="conversation-info">
+                        <div class="conversation-header">
+                            <span class="conversation-name">${conv.other_user.nickname}</span>
+                            <span class="conversation-time">${time}</span>
+                        </div>
+                        <div class="conversation-preview">
+                            ${conv.listing ? `<span class="listing-tag">${conv.listing.title}</span>` : ''}
+                            <span class="last-message">${conv.last_message || 'No messages yet'}</span>
+                        </div>
+                        ${conv.unread_count > 0 ? `<span class="unread-badge">${conv.unread_count}</span>` : ''}
+                    </div>
+                    <div class="conversation-menu">
+                        <button class="menu-btn" onclick="toggleConversationMenu(event, '${conv.id}', '${conv.other_user.email}')">
+                            <span>⋮</span>
+                        </button>
+                        <div class="menu-dropdown" id="menu-${conv.id}" style="display: none;">
+                            <button onclick="deleteConversation(event, '${conv.id}')">Delete</button>
+                            <button onclick="blockUser(event, '${conv.other_user.email}', '${conv.other_user.nickname}')">Block User</button>
+                            <button onclick="reportUser(event, '${conv.other_user.email}', '${conv.other_user.nickname}')">Report User</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        // Add click handlers
+        container.querySelectorAll('.conversation-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                // Don't open if clicking menu button or dropdown
+                if (e.target.closest('.conversation-menu')) {
+                    return;
+                }
+                openConversation({
+                    id: item.dataset.convId,
+                    recipient_email: item.dataset.recipient,
+                    listing_id: item.dataset.listingId,
+                    recipient_name: item.querySelector('.conversation-name').textContent,
+                    listing_title: item.querySelector('.listing-tag')?.textContent || ''
+                });
+            });
+        });
+        
+        // Close menus when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.conversation-menu')) {
+                document.querySelectorAll('.menu-dropdown').forEach(menu => {
+                    menu.style.display = 'none';
+                });
+            }
+        });
+    } catch (err) {
+        console.error('Error loading conversations:', err);
+        document.getElementById('conversationsList').innerHTML = '<div class="error">Error loading conversations</div>';
+    }
+}
+
+// Chat functionality
+let currentConversation = null;
+let messageRefreshInterval = null;
+
+function openConversation(conv) {
+    currentConversation = conv;
+    const modal = document.getElementById('chatModal');
+    const recipientName = document.getElementById('chatRecipientName');
+    const listingTitle = document.getElementById('chatListingTitle');
+    
+    recipientName.textContent = conv.recipient_name;
+    listingTitle.textContent = conv.listing_title;
+    
+    modal.style.display = 'flex';
+    
+    loadMessages(conv.id);
+    
+    // Start auto-refresh
+    if (messageRefreshInterval) clearInterval(messageRefreshInterval);
+    messageRefreshInterval = setInterval(() => {
+        if (currentConversation && currentConversation.id) {
+            loadMessages(currentConversation.id);
+        }
+    }, 3000);
+}
+
+function toggleConversationMenu(event, convId, recipientEmail) {
+    event.stopPropagation();
+    const menu = document.getElementById(`menu-${convId}`);
+    
+    // Close all other menus
+    document.querySelectorAll('.menu-dropdown').forEach(m => {
+        if (m.id !== `menu-${convId}`) {
+            m.style.display = 'none';
+        }
+    });
+    
+    // Toggle current menu
+    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
+async function deleteConversation(event, convId) {
+    event.stopPropagation();
+    
+    // Close the menu
+    document.querySelectorAll('.menu-dropdown').forEach(menu => {
+        menu.style.display = 'none';
+    });
+    
+    if (!confirm('Are you sure you want to delete this conversation? This cannot be undone.')) {
+        return;
+    }
+    
+    try {
+        const res = await fetch(`/api/messages/conversations/${convId}`, {
+            method: 'DELETE',
+            headers: { 'X-User-Email': currentUser.email }
+        });
+        
+        if (res.ok) {
+            // Close modal if this conversation is open
+            if (currentConversation && currentConversation.id === convId) {
+                closeChatModal();
+            }
+            // Reload conversations list
+            loadConversationsList();
+        } else {
+            const error = await res.json();
+            alert('Error deleting conversation: ' + (error.error || 'Unknown error'));
+        }
+    } catch (err) {
+        console.error('Error deleting conversation:', err);
+        alert('Error deleting conversation');
+    }
+}
+
+async function blockUser(event, recipientEmail, recipientName) {
+    event.stopPropagation();
+    
+    // Close the menu
+    document.querySelectorAll('.menu-dropdown').forEach(menu => {
+        menu.style.display = 'none';
+    });
+    
+    if (!confirm(`Are you sure you want to block ${recipientName}? They will not be able to message you.`)) {
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/users/block', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': currentUser.email
+            },
+            body: JSON.stringify({ blocked_email: recipientEmail })
+        });
+        
+        if (res.ok) {
+            alert(`${recipientName} has been blocked`);
+            loadConversationsList();
+        } else {
+            const error = await res.json();
+            alert('Error blocking user: ' + (error.error || 'Unknown error'));
+        }
+    } catch (err) {
+        console.error('Error blocking user:', err);
+        alert('Error blocking user');
+    }
+}
+
+async function reportUser(event, recipientEmail, recipientName) {
+    event.stopPropagation();
+    
+    // Close the menu
+    document.querySelectorAll('.menu-dropdown').forEach(menu => {
+        menu.style.display = 'none';
+    });
+    
+    const reason = prompt(`Why are you reporting ${recipientName}?\n\nPlease provide a reason:`);
+    if (!reason || reason.trim() === '') {
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/users/report', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': currentUser.email
+            },
+            body: JSON.stringify({
+                reported_email: recipientEmail,
+                reason: reason.trim(),
+                context: 'conversation'
+            })
+        });
+        
+        if (res.ok) {
+            alert(`${recipientName} has been reported. Thank you for keeping the community safe.`);
+        } else {
+            const error = await res.json();
+            alert('Error reporting user: ' + (error.error || 'Unknown error'));
+        }
+    } catch (err) {
+        console.error('Error reporting user:', err);
+        alert('Error reporting user');
+    }
+}
+
+function closeChatModal() {
+    const modal = document.getElementById('chatModal');
+    modal.style.display = 'none';
+    currentConversation = null;
+    if (messageRefreshInterval) {
+        clearInterval(messageRefreshInterval);
+        messageRefreshInterval = null;
+    }
+    // Reload conversations list to update unread counts
+    if (currentUser) {
+        loadConversationsList();
+    }
+}
+
+async function loadMessages(conversationId) {
+    try {
+        const res = await fetch(`/api/messages/conversation/${conversationId}`, {
+            headers: { 'X-User-Email': currentUser.email }
+        });
+        
+        if (!res.ok) {
+            throw new Error('Failed to load messages');
+        }
+        
+        const messages = await res.json();
+        displayMessages(messages);
+    } catch (err) {
+        console.error('Error loading messages:', err);
+    }
+}
+
+function displayMessages(messages) {
+    const container = document.getElementById('chatMessages');
+    
+    if (!messages || messages.length === 0) {
+        container.innerHTML = '<div class="no-messages">No messages yet. Start the conversation!</div>';
+        return;
+    }
+    
+    container.innerHTML = messages.map(msg => {
+        const isSent = msg.sender_email === currentUser.email;
+        const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        // Group reactions by type
+        const reactionCounts = {};
+        (msg.reactions || []).forEach(r => {
+            reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+        });
+        
+        const reactionsHtml = Object.keys(reactionCounts).length > 0 
+            ? `<div class="message-reactions">${Object.entries(reactionCounts).map(([type, count]) => 
+                `<span class="reaction">${type} ${count}</span>`).join('')}</div>`
+            : '';
+        
+        return `
+            <div class="message ${isSent ? 'sent' : 'received'}">
+                <div class="message-bubble">
+                    ${msg.reply_to ? `<div class="message-reply-preview">Replying to a message</div>` : ''}
+                    <div class="message-content">${escapeHtml(msg.content)}</div>
+                    <div class="message-meta">
+                        <span class="message-time">${time}</span>
+                        <button class="message-options" data-id="${msg.id}">⋮</button>
+                    </div>
+                    ${reactionsHtml}
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Scroll to bottom
+    container.scrollTop = container.scrollHeight;
+    
+    // Add event listeners for message options
+    container.querySelectorAll('.message-options').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showMessageOptions(btn.dataset.id, btn);
+        });
+    });
+}
+
+function showMessageOptions(messageId, buttonEl) {
+    const existing = document.querySelector('.message-options-menu');
+    if (existing) existing.remove();
+    
+    const menu = document.createElement('div');
+    menu.className = 'message-options-menu';
+    menu.innerHTML = `
+        <button class="menu-item" data-action="react">React</button>
+        <button class="menu-item" data-action="reply">Reply</button>
+    `;
+    
+    const rect = buttonEl.getBoundingClientRect();
+    menu.style.position = 'absolute';
+    menu.style.top = rect.bottom + 'px';
+    menu.style.left = rect.left + 'px';
+    document.body.appendChild(menu);
+    
+    menu.addEventListener('click', async (e) => {
+        const action = e.target.dataset.action;
+        menu.remove();
+        
+        if (action === 'react') {
+            showReactionPicker(messageId);
+        } else if (action === 'reply') {
+            setReplyTo(messageId);
+        }
+    });
+    
+    setTimeout(() => {
+        document.addEventListener('click', function closeMenu() {
+            menu.remove();
+            document.removeEventListener('click', closeMenu);
+        });
+    }, 100);
+}
+
+function showReactionPicker(messageId) {
+    const reactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+    const menu = document.createElement('div');
+    menu.className = 'reaction-picker';
+    menu.innerHTML = reactions.map(r => `<button class="reaction-btn">${r}</button>`).join('');
+    
+    document.body.appendChild(menu);
+    
+    menu.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('reaction-btn')) {
+            await reactToMessage(messageId, e.target.textContent);
+            menu.remove();
+        }
+    });
+    
+    setTimeout(() => {
+        document.addEventListener('click', function closePicker() {
+            menu.remove();
+            document.removeEventListener('click', closePicker);
+        });
+    }, 100);
+}
+
+async function reactToMessage(messageId, reaction) {
+    try {
+        const res = await fetch(`/api/messages/${messageId}/react`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': currentUser.email
+            },
+            body: JSON.stringify({ reaction })
+        });
+        
+        if (res.ok && currentConversation && currentConversation.id) {
+            loadMessages(currentConversation.id);
+        }
+    } catch (err) {
+        console.error('Error reacting to message:', err);
+    }
+}
+
+let replyToMessageId = null;
+
+function setReplyTo(messageId) {
+    replyToMessageId = messageId;
+    const input = document.getElementById('chatInput');
+    input.placeholder = 'Replying to a message... (Click to cancel)';
+    input.focus();
+}
+
+async function reportMessage(messageId) {
+    const reason = prompt('Please describe why you are reporting this message:');
+    if (!reason) return;
+    
+    try {
+        const res = await fetch(`/api/messages/${messageId}/report`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': currentUser.email
+            },
+            body: JSON.stringify({ reason })
+        });
+        
+        if (res.ok) {
+            alert('Message reported. Thank you for keeping our community safe.');
+        }
+    } catch (err) {
+        console.error('Error reporting message:', err);
+        alert('Error reporting message. Please try again.');
+    }
+}
+
+async function blockUser() {
+    if (!currentConversation) return;
+    
+    const confirmed = confirm(`Block ${currentConversation.recipient_name}? They will not be able to send you messages.`);
+    if (!confirmed) return;
+    
+    try {
+        const res = await fetch('/api/users/block', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': currentUser.email
+            },
+            body: JSON.stringify({ blocked_email: currentConversation.recipient_email })
+        });
+        
+        const result = await res.json();
+        
+        if (result.success || !result.error) {
+            alert('User blocked successfully.');
+            closeChatModal();
+        } else {
+            alert(`Error: ${result.error || 'Failed to block user'}`);
+        }
+    } catch (err) {
+        console.error('Error blocking user:', err);
+        alert('Error blocking user. Please try again.');
+    }
+}
+
+async function sendMessage() {
+    const input = document.getElementById('chatInput');
+    const content = input.value.trim();
+    
+    if (!content) return;
+    
+    try {
+        const payload = {
+            sender_email: currentUser.email,
+            recipient_email: currentConversation.recipient_email,
+            listing_id: currentConversation.listing_id,
+            content: content
+        };
+        
+        if (replyToMessageId) {
+            payload.reply_to = replyToMessageId;
+        }
+        
+        const res = await fetch('/api/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': currentUser.email
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        const result = await res.json();
+        
+        if (result.error) {
+            alert(`Error: ${result.error}`);
+            return;
+        }
+        
+        input.value = '';
+        replyToMessageId = null;
+        input.placeholder = 'Type a message...';
+        
+        if (currentConversation.id) {
+            loadMessages(currentConversation.id);
+        }
+    } catch (err) {
+        console.error('Error sending message:', err);
+        alert('Error sending message. Please try again.');
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Event listeners
+document.getElementById('chatClose').addEventListener('click', closeChatModal);
+document.getElementById('sendMessage').addEventListener('click', sendMessage);
+document.getElementById('chatInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+
+// Chat menu handlers
+document.getElementById('chatMenuBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const dropdown = document.getElementById('chatMenuDropdown');
+    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('chatBlockBtn').addEventListener('click', async () => {
+    if (!currentConversation) return;
+    
+    const recipientName = document.getElementById('chatRecipientName').textContent;
+    if (!confirm(`Are you sure you want to block ${recipientName}? They will not be able to message you.`)) {
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/users/block', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': currentUser.email
+            },
+            body: JSON.stringify({ blocked_email: currentConversation.recipient_email })
+        });
+        
+        if (res.ok) {
+            alert(`${recipientName} has been blocked`);
+            document.getElementById('chatMenuDropdown').style.display = 'none';
+            closeChatModal();
+            loadConversationsList();
+        } else {
+            const error = await res.json();
+            alert('Error blocking user: ' + (error.error || 'Unknown error'));
+        }
+    } catch (err) {
+        console.error('Error blocking user:', err);
+        alert('Error blocking user');
+    }
+});
+
+document.getElementById('chatReportBtn').addEventListener('click', async () => {
+    if (!currentConversation) return;
+    
+    const recipientName = document.getElementById('chatRecipientName').textContent;
+    const reason = prompt(`Why are you reporting ${recipientName}?\n\nPlease provide a reason:`);
+    if (!reason || reason.trim() === '') {
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/users/report', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-Email': currentUser.email
+            },
+            body: JSON.stringify({
+                reported_email: currentConversation.recipient_email,
+                reason: reason.trim(),
+                context: 'chat'
+            })
+        });
+        
+        if (res.ok) {
+            alert(`${recipientName} has been reported. Thank you for keeping the community safe.`);
+            document.getElementById('chatMenuDropdown').style.display = 'none';
+        } else {
+            const error = await res.json();
+            alert('Error reporting user: ' + (error.error || 'Unknown error'));
+        }
+    } catch (err) {
+        console.error('Error reporting user:', err);
+        alert('Error reporting user');
+    }
+});
+
+// Close chat menu when clicking outside
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.chat-menu')) {
+        document.getElementById('chatMenuDropdown').style.display = 'none';
+    }
+});
+
+document.getElementById('chatModal').addEventListener('click', (e) => {
+    if (e.target.id === 'chatModal') {
+        closeChatModal();
+    }
+});
+
+// Initialize on page load
+checkAuth();
+
+// Auto-refresh conversations list every 5 seconds
+let conversationsRefreshInterval = null;
+if (currentUser) {
+    conversationsRefreshInterval = setInterval(() => {
+        if (currentUser && !document.getElementById('chatModal').style.display.includes('flex')) {
+            loadConversationsList();
+        }
+    }, 5000);
+}
+</script>
+
+<style>
+.messages-page {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: var(--spacing-md);
+}
+
+.messages-container {
+    background: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+}
+
+.messages-header {
+    padding: var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.messages-header h1 {
+    color: var(--brand-brown);
+}
+
+.conversations-list {
+    min-height: 400px;
+}
+
+.no-conversations, .loading, .error {
+    text-align: center;
+    padding: var(--spacing-xl);
+    color: var(--color-text-light);
+}
+
+.conversation-item {
+    display: flex;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--color-border);
+    cursor: pointer;
+    transition: background 0.2s;
+    position: relative;
+}
+
+.conversation-item:hover {
+    background: var(--color-bg-alt);
+}
+
+.conversation-avatar {
+    flex-shrink: 0;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--color-bg-alt);
+}
+
+.conversation-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.avatar-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--brand-brown);
+    color: white;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.conversation-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.conversation-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.conversation-name {
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.conversation-time {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-lighter);
+}
+
+.conversation-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.listing-tag {
+    font-size: var(--font-size-sm);
+    color: var(--brand-brown);
+    font-weight: 500;
+}
+
+.last-message {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-light);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.unread-badge {
+    position: absolute;
+    top: var(--spacing-md);
+    right: var(--spacing-md);
+    background: var(--brand-brown);
+    color: white;
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.conversation-menu {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.menu-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-light);
+    cursor: pointer;
+    padding: var(--spacing-xs);
+    font-size: 24px;
+    line-height: 1;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+}
+
+.menu-btn:hover {
+    background: var(--color-bg-alt);
+    color: var(--brand-brown);
+}
+
+.menu-dropdown {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    background: white;
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-md);
+    min-width: 180px;
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.menu-dropdown button {
+    display: block;
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: white;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    color: var(--color-text);
+    font-size: var(--font-size-base);
+    transition: background 0.2s;
+}
+
+.menu-dropdown button:hover {
+    background: var(--color-bg-alt);
+}
+
+.menu-dropdown button:first-child:hover {
+    background: #fee;
+    color: #c00;
+}
+
+.menu-dropdown button:nth-child(2):hover {
+    background: #fef3e0;
+    color: var(--brand-brown);
+}
+
+.menu-dropdown button:last-child:hover {
+    background: #fef3e0;
+    color: var(--brand-brown);
+}
+
+.chat-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.chat-menu {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.chat-menu-btn {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: var(--spacing-xs);
+    font-size: 24px;
+    line-height: 1;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.chat-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.chat-menu-dropdown {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    background: white;
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-md);
+    min-width: 150px;
+    z-index: 1000;
+    overflow: hidden;
+    margin-top: 4px;
+}
+
+.chat-menu-dropdown button {
+    display: block;
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: white;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    color: var(--color-text);
+    font-size: var(--font-size-base);
+    transition: background 0.2s;
+}
+
+.chat-menu-dropdown button:hover {
+    background: #fef3e0;
+    color: var(--brand-brown);
+}
+</style>
+{% endblock %}

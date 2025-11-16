@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DormDealz{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <nav class="nav">
+        <div class="nav-container">
+            <a href="/" class="nav-logo">
+                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="DormDealz" class="logo-img">
+            </a>
+            <div class="nav-links">
+                <a href="/" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">Explore</a>
+                <a href="/for-your-classes" class="nav-link {% if request.endpoint == 'for_your_classes' %}active{% endif %}">For Your Classes</a>
+                <a href="/sell" class="nav-link btn-nav {% if request.endpoint == 'sell_page' %}active{% endif %}">Sell</a>
+                <a href="/my-listings" class="nav-link {% if request.endpoint == 'my_listings' %}active{% endif %}">My Listings</a>
+                <a href="/saved" class="nav-link {% if request.endpoint == 'saved' %}active{% endif %}">Saved</a>
+                <a href="/messages" class="nav-link {% if request.endpoint == 'messages_page' %}active{% endif %}">Messages</a>
+            </div>
+            <div class="nav-auth">
+                <button class="btn-login" onclick="showLoginModal()">Login</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <div class="footer-container">
+            <p>DormDealz: Study Hard. Spend Smart.</p>
+        </div>
+    </footer>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal" style="display: none;">
+        <div class="modal-overlay" onclick="closeLoginModal()"></div>
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2>Login / Sign Up</h2>
+                <button class="modal-close" onclick="closeLoginModal()">×</button>
+            </div>
+            <form id="loginForm" class="modal-form">
+                <div class="form-group">
+                    <label>Lehigh Email *</label>
+                    <input type="email" id="loginEmail" required placeholder="your.email@lehigh.edu" pattern=".*@lehigh\.edu$">
+                    <small>Must be a @lehigh.edu email address</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Choose a Nickname *</label>
+                    <input type="text" id="loginNickname" required placeholder="e.g., Alex M." maxlength="30" pattern="[A-Za-z0-9\s\.\-_]+">
+                    <small>This will be displayed on your listings (letters, numbers, spaces, dots, dashes only)</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Human Verification (CAPTCHA) *</label>
+                    <div class="captcha-wrapper">
+                        <div id="captchaChallenge" class="captcha-challenge">
+                            <div class="captcha-instruction" id="captchaInstruction"></div>
+                            <div id="captchaImages" class="captcha-images-grid"></div>
+                            <div id="captchaSelected" class="captcha-selected"></div>
+                        </div>
+                        <div class="captcha-button-container">
+                            <button type="button" class="btn-refresh btn-refresh-captcha" onclick="refreshCaptcha()" title="New CAPTCHA">↻</button>
+                        </div>
+                    </div>
+                    <small>Select all images that match the description to verify you're human</small>
+                </div>
+                
+                <div id="loginError" class="error-message" style="display: none;"></div>
+                
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary btn-full">Login / Sign Up</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+    
+    <script>
+        // Shrink navbar on scroll (with debouncing to prevent stuttering)
+        let scrollTimeout;
+        window.addEventListener('scroll', () => {
+            if (scrollTimeout) {
+                window.cancelAnimationFrame(scrollTimeout);
+            }
+            scrollTimeout = window.requestAnimationFrame(() => {
+                const nav = document.querySelector('.nav');
+                if (window.scrollY > 100) {
+                    nav.classList.add('scrolled');
+                } else {
+                    nav.classList.remove('scrolled');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

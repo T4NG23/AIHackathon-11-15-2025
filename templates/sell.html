@@ -1,0 +1,469 @@
+{% extends "base.html" %}
+
+{% block title %}Sell - Lehigh Marketplace{% endblock %}
+
+{% block content %}
+<div class="sell-container">
+    <div class="sell-header">
+        <h1>Sell</h1>
+        <p>List your textbooks, supplies, or electronics for sale</p>
+    </div>
+
+    <div class="sell-form-container">
+        <form id="sellForm" class="sell-form">
+            <div class="form-section">
+                <h2>Item Details</h2>
+                
+                <div class="form-group">
+                    <label>Title *</label>
+                    <input type="text" id="listingTitle" required placeholder="e.g., Introduction to Computer Science 5th Edition">
+                </div>
+
+                <div class="form-group">
+                    <label>Description *</label>
+                    <textarea id="listingDescription" rows="5" required placeholder="Describe the condition, edition, any notes, etc."></textarea>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <select id="listingCategory" required>
+                            <option value="">Select category</option>
+                            <option value="textbooks">Textbooks</option>
+                            <option value="supplies">School Supplies</option>
+                            <option value="electronics">Academic Electronics</option>
+                            <option value="class-required">Class-Required Items</option>
+                            <option value="dorm">Dorm & Student Life</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Subcategory</label>
+                        <select id="listingSubcategory">
+                            <option value="">Select subcategory</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Condition *</label>
+                        <select id="listingCondition" required>
+                            <option value="">Select condition</option>
+                            <option value="New">New</option>
+                            <option value="Like New">Like New</option>
+                            <option value="Good">Good</option>
+                            <option value="Fair">Fair</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Price *</label>
+                        <input type="number" id="listingPrice" step="0.01" required placeholder="0.00">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Class Codes (optional)</label>
+                    <input type="text" id="listingClassTags" placeholder="EECS 183, BIO 120 (comma-separated)">
+                    <small>Tag classes this item is used for</small>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>ISBN (for textbooks)</label>
+                        <input type="text" id="listingISBN" placeholder="9780135929032">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Edition</label>
+                        <select id="listingEdition">
+                            <option value="current">Current</option>
+                            <option value="previous">Previous</option>
+                            <option value="older">Older</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h2>Smart Features</h2>
+                
+                <div class="smart-features">
+                    <button type="button" class="btn btn-secondary" onclick="uploadSyllabus()">
+                        Upload Syllabus (Auto-detect books)
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="comparePrices()">
+                        Compare Prices
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="getPriceSuggestion()">
+                        Get AI Price Suggestion
+                    </button>
+                </div>
+
+                <div id="smartResults" class="smart-results"></div>
+            </div>
+
+            <div class="form-section">
+                <h2>Your Information</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Your Name *</label>
+                        <input type="text" id="sellerName" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Contact (Email or Phone) *</label>
+                        <input type="text" id="sellerContact" required placeholder="your.email@lehigh.edu">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Photos (take or upload, multiple allowed)</label>
+                    <input type="file" id="listingImageFile" accept="image/*" capture="environment" multiple>
+                    <div id="imagePreview" style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;"></div>
+                    <small>You can take photos with your phone camera or upload multiple images. Thumbnails will appear below.</small>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="window.location.href='/'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Listing</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Syllabus Upload Modal -->
+<div id="syllabusModal" class="modal" style="display: none;">
+    <div class="modal-overlay" onclick="closeSyllabusModal()"></div>
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Upload Syllabus</h2>
+            <button class="modal-close" onclick="closeSyllabusModal()">×</button>
+        </div>
+        <form id="syllabusForm" enctype="multipart/form-data">
+            <div class="modal-form">
+                <div class="form-group">
+                    <label>Upload Syllabus PDF</label>
+                    <input type="file" id="syllabusFile" accept=".pdf,.doc,.docx" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeSyllabusModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Upload & Extract</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentUser = null;
+
+// Check auth
+function checkAuth() {
+    const userEmail = localStorage.getItem('userEmail');
+    if (!userEmail) {
+        showLoginModal();
+        return false;
+    }
+    currentUser = { email: userEmail };
+    updateAuthUI();
+    return true;
+}
+
+function updateAuthUI() {
+    if (currentUser) {
+        const loginBtn = document.querySelector('.btn-login');
+        if (loginBtn) {
+            const nickname = localStorage.getItem('userNickname') || currentUser.email.split('@')[0];
+            loginBtn.textContent = nickname;
+        }
+    }
+}
+
+// Category subcategories
+const subcategories = {
+    'textbooks': ['New', 'Used', 'Rentals', 'PDFs/Links', 'Previous Editions', 'Instructor Notes'],
+    'supplies': ['Calculators', 'Lab Goggles', 'Clickers', 'Notebooks', 'Binders', 'Index Cards'],
+    'electronics': ['Laptops', 'Tablets', 'Headphones', 'Chargers', 'Keyboards', 'USB Drives'],
+    'class-required': ['Lab Coats', 'Scrubs', 'Equipment Kits', 'Studio Art Supplies'],
+    'dorm': ['Microwaves', 'Mini-Fridges', 'Fans', 'Lamps', 'Desks', 'Bike Locks']
+};
+
+document.getElementById('listingCategory').addEventListener('change', (e) => {
+    const category = e.target.value;
+    const subcategorySelect = document.getElementById('listingSubcategory');
+    subcategorySelect.innerHTML = '<option value="">Select subcategory</option>';
+    
+    if (subcategories[category]) {
+        subcategories[category].forEach(sub => {
+            const option = document.createElement('option');
+            option.value = sub;
+            option.textContent = sub;
+            subcategorySelect.appendChild(option);
+        });
+    }
+});
+
+// Image preview (multiple)
+document.getElementById('listingImageFile').addEventListener('change', function(e) {
+    const files = Array.from(e.target.files || []);
+    const preview = document.getElementById('imagePreview');
+    preview.innerHTML = '';
+    if (!files.length) return;
+    files.forEach(file => {
+        const img = document.createElement('img');
+        img.style.width = '120px';
+        img.style.height = '120px';
+        img.style.objectFit = 'cover';
+        img.style.borderRadius = '6px';
+        img.style.border = '1px solid var(--color-border)';
+        img.src = URL.createObjectURL(file);
+        preview.appendChild(img);
+    });
+});
+
+function uploadSyllabus() {
+    if (!checkAuth()) return;
+    document.getElementById('syllabusModal').style.display = 'flex';
+}
+
+function closeSyllabusModal() {
+    document.getElementById('syllabusModal').style.display = 'none';
+}
+
+document.getElementById('syllabusForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData();
+    formData.append('file', document.getElementById('syllabusFile').files[0]);
+    
+    try {
+        const response = await fetch('/api/syllabus/upload', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            const extracted = data.extracted;
+            document.getElementById('listingTitle').value = extracted.textbooks[0]?.title || '';
+            document.getElementById('listingISBN').value = extracted.textbooks[0]?.isbn || '';
+            document.getElementById('listingClassTags').value = extracted.class_code || '';
+            document.getElementById('listingDescription').value = `Required for ${extracted.class_name}. ${extracted.instructor_notes || ''}`;
+            closeSyllabusModal();
+            showNotification('Syllabus parsed successfully!', 'success');
+        }
+    } catch (error) {
+        alert('Error uploading syllabus: ' + error.message);
+    }
+});
+
+async function comparePrices() {
+    const title = document.getElementById('listingTitle').value;
+    const isbn = document.getElementById('listingISBN').value;
+    
+    if (!title && !isbn) {
+        alert('Please enter a title or ISBN first');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/price/compare', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, isbn })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            displayPriceComparison(data.comparison);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+function displayPriceComparison(comparison) {
+    const resultsDiv = document.getElementById('smartResults');
+    resultsDiv.innerHTML = `
+        <div class="price-comparison">
+            <h3>Price Comparison for "${comparison.title}"</h3>
+            <div class="comparison-sources">
+                ${comparison.sources.map(source => `
+                    <div class="comparison-item">
+                        <strong>${source.platform}</strong>
+                        <span class="price">$${source.price.toFixed(2)}</span>
+                        <span class="condition">${source.condition}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="best-deal">
+                <strong>Best Deal:</strong> ${comparison.best_deal.platform} - $${comparison.best_deal.price.toFixed(2)}
+                <span class="savings">Save $${comparison.best_deal.savings.toFixed(2)}</span>
+            </div>
+        </div>
+    `;
+}
+
+async function getPriceSuggestion() {
+    const title = document.getElementById('listingTitle').value;
+    const condition = document.getElementById('listingCondition').value;
+    const edition = document.getElementById('listingEdition').value;
+    const classTags = document.getElementById('listingClassTags').value;
+    
+    if (!title || !condition) {
+        alert('Please enter title and condition first');
+        return;
+    }
+    
+    // Mock retail price
+    const retailPrice = parseFloat(document.getElementById('listingPrice').value) || 100;
+    
+    try {
+        const response = await fetch('/api/price/suggest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title,
+                condition,
+                edition,
+                class_code: classTags.split(',')[0] || '',
+                retail_price: retailPrice
+            })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            displayPriceSuggestion(data.suggestion);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+function displayPriceSuggestion(suggestion) {
+    const resultsDiv = document.getElementById('smartResults');
+    resultsDiv.innerHTML = `
+        <div class="price-suggestion">
+            <h3>AI Price Suggestion</h3>
+            <div class="suggested-price">$${suggestion.suggested_price.toFixed(2)}</div>
+            <p class="suggestion-range">Range: $${suggestion.price_range.min.toFixed(2)} - $${suggestion.price_range.max.toFixed(2)}</p>
+            <p class="suggestion-reasoning">${suggestion.reasoning}</p>
+            <button type="button" class="btn btn-secondary btn-small" onclick="useSuggestedPrice(${suggestion.suggested_price})">Use This Price</button>
+        </div>
+    `;
+}
+
+function useSuggestedPrice(price) {
+    document.getElementById('listingPrice').value = price.toFixed(2);
+}
+
+document.getElementById('sellForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    if (!checkAuth()) return;
+    
+    const classTags = document.getElementById('listingClassTags').value
+        .split(',')
+        .map(tag => tag.trim().toUpperCase())
+        .filter(tag => tag);
+    
+    const listingData = {
+        title: document.getElementById('listingTitle').value,
+        description: document.getElementById('listingDescription').value,
+        category: document.getElementById('listingCategory').value,
+        subcategory: document.getElementById('listingSubcategory').value,
+        condition: document.getElementById('listingCondition').value,
+        price: document.getElementById('listingPrice').value,
+        class_tags: classTags,
+        isbn: document.getElementById('listingISBN').value,
+        edition: document.getElementById('listingEdition').value,
+        seller_email: currentUser.email,
+        seller_name: document.getElementById('sellerName').value,
+        contact: document.getElementById('sellerContact').value
+    };
+    
+    // If image files are provided, upload them first (support multiple)
+    const imgFiles = Array.from(document.getElementById('listingImageFile').files || []);
+    if (imgFiles.length) {
+        try {
+            const uploadPromises = imgFiles.map(async (f) => {
+                const fd = new FormData();
+                fd.append('file', f);
+                const upl = await fetch('/api/marketplace/upload_image', { method: 'POST', body: fd });
+                const uplData = await upl.json();
+                if (uplData.success) return uplData.url;
+                console.warn('Image upload failed for file', f.name, uplData.error);
+                return null;
+            });
+
+            const results = await Promise.all(uploadPromises);
+            const urls = results.filter(u => u);
+            if (urls.length) {
+                listingData.image_urls = urls;
+            }
+        } catch (err) {
+            console.error('Image upload error', err);
+        }
+    }
+    
+    try {
+        const response = await fetch('/api/marketplace/listings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(listingData)
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            showNotification('Listing created successfully!', 'success');
+            setTimeout(() => {
+                window.location.href = '/my-listings';
+            }, 1500);
+        } else {
+            alert('Error: ' + (data.error || 'Failed to create listing'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+});
+
+function showNotification(message, type) {
+    // Simple notification
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #1a1a1a;
+        color: white;
+        padding: 1rem 1.5rem;
+        border: 1px solid #1a1a1a;
+        z-index: 3000;
+    `;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    setTimeout(() => notification.remove(), 3000);
+}
+
+// Initialize
+checkAuth();
+// Auto-fill seller info when logged in
+document.addEventListener('DOMContentLoaded', () => {
+    const userEmail = localStorage.getItem('userEmail');
+    const nickname = localStorage.getItem('userNickname');
+    if (userEmail) {
+        currentUser = { email: userEmail };
+        // pre-fill seller contact and name when available
+        if (!document.getElementById('sellerContact').value) document.getElementById('sellerContact').value = userEmail;
+        if (nickname && !document.getElementById('sellerName').value) document.getElementById('sellerName').value = nickname;
+    }
+});
+</script>
+{% endblock %}
+

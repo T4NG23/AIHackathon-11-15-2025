@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}Budget Planner{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="container">
+        <h1>Textbooks & Supplies Budget Planner</h1>
+        <p>Track costs, get suggestions, and manage your semester budget</p>
+    </div>
+</div>
+
+<div class="container">
+    <div class="planner-dashboard">
+        <div class="budget-summary-card">
+            <h2>Budget Summary</h2>
+            <div id="budgetSummary" class="budget-stats">
+                <div class="stat-item">
+                    <span class="stat-label">Total Cost</span>
+                    <span class="stat-value" id="totalCost">$0.00</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Textbooks</span>
+                    <span class="stat-value" id="textbookCost">$0.00</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Supplies</span>
+                    <span class="stat-value" id="supplyCost">$0.00</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="suggestions-card" id="suggestionsCard" style="display: none;">
+            <h2>Cost-Saving Suggestions</h2>
+            <div id="suggestionsList"></div>
+        </div>
+    </div>
+
+    <div class="classes-section">
+        <div class="section-header">
+            <h2>Your Classes</h2>
+            <button class="btn btn-primary" onclick="showAddClassModal()">+ Add Class</button>
+        </div>
+        <div id="classesList" class="classes-list"></div>
+    </div>
+</div>
+
+<!-- Add Class Modal -->
+<div id="addClassModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Add New Class</h2>
+            <span class="close" onclick="closeModal()">&times;</span>
+        </div>
+        <form id="addClassForm" class="modal-form">
+            <div class="form-group">
+                <label>Class Name *</label>
+                <input type="text" id="modalClassName" required>
+            </div>
+            <div class="form-group">
+                <label>Semester *</label>
+                <input type="text" id="modalSemester" required placeholder="e.g., Fall 2025">
+            </div>
+            <div class="form-group">
+                <label>Textbooks</label>
+                <div id="textbooksContainer">
+                    <div class="item-row">
+                        <input type="text" placeholder="Textbook name" class="item-name">
+                        <input type="number" placeholder="Price" step="0.01" class="item-price">
+                        <button type="button" class="btn-remove" onclick="removeItem(this)">×</button>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-secondary" onclick="addTextbookRow()">+ Add Textbook</button>
+            </div>
+            <div class="form-group">
+                <label>Supplies</label>
+                <div id="suppliesContainer">
+                    <div class="item-row">
+                        <input type="text" placeholder="Supply name" class="item-name">
+                        <input type="number" placeholder="Price" step="0.01" class="item-price">
+                        <input type="number" placeholder="Qty" value="1" min="1" class="item-quantity">
+                        <button type="button" class="btn-remove" onclick="removeItem(this)">×</button>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-secondary" onclick="addSupplyRow()">+ Add Supply</button>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Class</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let classes = [];
+
+async function loadClasses() {
+    try {
+        const response = await fetch('/api/planner/classes');
+        const data = await response.json();
+        if (data.success) {
+            classes = data.classes;
+            renderClasses();
+            updateBudget();
+        }
+    } catch (error) {
+        console.error('Error loading classes:', error);
+    }
+}
+
+async function updateBudget() {
+    try {
+        const response = await fetch('/api/planner/budget');
+        const data = await response.json();
+        if (data.success) {
+            const budget = data.budget;
+            document.getElementById('totalCost').textContent = `$${budget.total_cost.toFixed(2)}`;
+            document.getElementById('textbookCost').textContent = `$${budget.textbook_cost.toFixed(2)}`;
+            document.getElementById('supplyCost').textContent = `$${budget.supply_cost.toFixed(2)}`;
+            
+            // Get suggestions
+            getSuggestions(budget);
+        }
+    } catch (error) {
+        console.error('Error updating budget:', error);
+    }
+}
+
+async function getSuggestions(budget) {
+    try {
+        const response = await fetch('/api/planner/suggestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ classes: classes, budget: 0 })
+        });
+        const data = await response.json();
+        if (data.success && data.suggestions.length > 0) {
+            renderSuggestions(data.suggestions);
+        }
+    } catch (error) {
+        console.error('Error getting suggestions:', error);
+    }
+}
+
+function renderSuggestions(suggestions) {
+    const container = document.getElementById('suggestionsList');
+    container.innerHTML = suggestions.map(s => `
+        <div class="suggestion-item priority-${s.priority}">
+            <h4>${s.title}</h4>
+            <p>${s.description}</p>
+            <ul>
+                ${s.actions.map(a => `<li>${a}</li>`).join('')}
+            </ul>
+            ${s.estimated_savings ? `<p class="savings">Estimated Savings: ${s.estimated_savings}</p>` : ''}
+        </div>
+    `).join('');
+    document.getElementById('suggestionsCard').style.display = 'block';
+}
+
+function renderClasses() {
+    const container = document.getElementById('classesList');
+    if (classes.length === 0) {
+        container.innerHTML = '<p class="empty-state">No classes added yet. Click "Add Class" to get started.</p>';
+        return;
+    }
+    
+    container.innerHTML = classes.map(cls => `
+        <div class="class-card">
+            <div class="class-header">
+                <h3>${cls.class_name}</h3>
+                <span class="semester-badge">${cls.semester}</span>
+                <button class="btn-icon" onclick="deleteClass('${cls.id}')">🗑️</button>
+            </div>
+            <div class="class-content">
+                <div class="items-section">
+                    <h4>Textbooks (${cls.textbooks?.length || 0})</h4>
+                    ${cls.textbooks?.length > 0 ? cls.textbooks.map(t => `
+                        <div class="item">${t.name} - $${parseFloat(t.price || 0).toFixed(2)}</div>
+                    `).join('') : '<p class="no-items">No textbooks</p>'}
+                </div>
+                <div class="items-section">
+                    <h4>Supplies (${cls.supplies?.length || 0})</h4>
+                    ${cls.supplies?.length > 0 ? cls.supplies.map(s => `
+                        <div class="item">${s.name} - $${parseFloat(s.price || 0).toFixed(2)} × ${s.quantity || 1}</div>
+                    `).join('') : '<p class="no-items">No supplies</p>'}
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function showAddClassModal() {
+    document.getElementById('addClassModal').style.display = 'block';
+}
+
+function closeModal() {
+    document.getElementById('addClassModal').style.display = 'none';
+    document.getElementById('addClassForm').reset();
+}
+
+function addTextbookRow() {
+    const container = document.getElementById('textbooksContainer');
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.innerHTML = `
+        <input type="text" placeholder="Textbook name" class="item-name">
+        <input type="number" placeholder="Price" step="0.01" class="item-price">
+        <button type="button" class="btn-remove" onclick="removeItem(this)">×</button>
+    `;
+    container.appendChild(row);
+}
+
+function addSupplyRow() {
+    const container = document.getElementById('suppliesContainer');
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.innerHTML = `
+        <input type="text" placeholder="Supply name" class="item-name">
+        <input type="number" placeholder="Price" step="0.01" class="item-price">
+        <input type="number" placeholder="Qty" value="1" min="1" class="item-quantity">
+        <button type="button" class="btn-remove" onclick="removeItem(this)">×</button>
+    `;
+    container.appendChild(row);
+}
+
+function removeItem(btn) {
+    btn.parentElement.remove();
+}
+
+document.getElementById('addClassForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const textbooks = Array.from(document.querySelectorAll('#textbooksContainer .item-row')).map(row => {
+        const name = row.querySelector('.item-name').value;
+        const price = row.querySelector('.item-price').value;
+        if (name && price) {
+            return { name, price: parseFloat(price) };
+        }
+        return null;
+    }).filter(Boolean);
+    
+    const supplies = Array.from(document.querySelectorAll('#suppliesContainer .item-row')).map(row => {
+        const name = row.querySelector('.item-name').value;
+        const price = row.querySelector('.item-price').value;
+        const quantity = row.querySelector('.item-quantity')?.value || 1;
+        if (name && price) {
+            return { name, price: parseFloat(price), quantity: parseInt(quantity) };
+        }
+        return null;
+    }).filter(Boolean);
+    
+    const classData = {
+        class_name: document.getElementById('modalClassName').value,
+        semester: document.getElementById('modalSemester').value,
+        textbooks,
+        supplies
+    };
+    
+    try {
+        const response = await fetch('/api/planner/classes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(classData)
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            closeModal();
+            loadClasses();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to add class'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+});
+
+async function deleteClass(classId) {
+    if (!confirm('Are you sure you want to delete this class?')) return;
+    
+    try {
+        const response = await fetch(`/api/planner/classes/${classId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            loadClasses();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to delete class'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    const modal = document.getElementById('addClassModal');
+    if (event.target == modal) {
+        closeModal();
+    }
+}
+
+// Load on page load
+loadClasses();
+</script>
+{% endblock %}
+

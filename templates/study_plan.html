@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Personalized Study Plan Generator{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="container">
+        <h1>Personalized Study Plan Generator</h1>
+        <p>Create a customized study plan tailored to your unique needs, learning style, and goals</p>
+    </div>
+</div>
+
+<div class="container">
+    <div class="form-section">
+        <form id="studyPlanForm" class="study-plan-form">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="student_name">Student Name *</label>
+                    <input type="text" id="student_name" name="student_name" required placeholder="Enter your name">
+                </div>
+
+                <div class="form-group">
+                    <label for="field_of_study">Field of Study *</label>
+                    <input type="text" id="field_of_study" name="field_of_study" required placeholder="e.g., Computer Science, Engineering">
+                </div>
+
+                <div class="form-group">
+                    <label for="year_of_study">Year of Study *</label>
+                    <select id="year_of_study" name="year_of_study" required>
+                        <option value="">Select year</option>
+                        <option value="Freshman">Freshman</option>
+                        <option value="Sophomore">Sophomore</option>
+                        <option value="Junior">Junior</option>
+                        <option value="Senior">Senior</option>
+                        <option value="Graduate">Graduate</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="preferred_learning_styles">Preferred Learning Style *</label>
+                    <select id="preferred_learning_styles" name="preferred_learning_styles" required>
+                        <option value="">Select learning style</option>
+                        <option value="Visual">Visual (Learn by seeing)</option>
+                        <option value="Auditory">Auditory (Learn by hearing)</option>
+                        <option value="Kinesthetic">Kinesthetic (Learn by doing)</option>
+                        <option value="Reading/Writing">Reading/Writing</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="list_of_subjects">Subjects/Courses *</label>
+                <textarea id="list_of_subjects" name="list_of_subjects" rows="3" required 
+                    placeholder="Enter subjects separated by commas (e.g., Data Structures, Databases, Discrete Mathematics)"></textarea>
+                <small>Separate multiple subjects with commas</small>
+            </div>
+
+            <div class="form-group">
+                <label for="personal_objectives">Personal Objectives</label>
+                <textarea id="personal_objectives" name="personal_objectives" rows="3" 
+                    placeholder="e.g., Improve programming skills, Prepare for internship interviews"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="challenges">Challenges</label>
+                <textarea id="challenges" name="challenges" rows="3" 
+                    placeholder="e.g., Difficulty with theoretical concepts, Time management issues"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="extracurricular_activities">Extracurricular Activities</label>
+                <textarea id="extracurricular_activities" name="extracurricular_activities" rows="2" 
+                    placeholder="e.g., Coding club, Sports, Part-time job"></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-large">
+                <span class="btn-text">Generate Study Plan</span>
+                <span class="btn-loader" style="display: none;">Generating...</span>
+            </button>
+        </form>
+    </div>
+
+    <div id="resultSection" class="result-section" style="display: none;">
+        <div class="result-header">
+            <h2>Your Personalized Study Plan</h2>
+            <button class="btn btn-secondary" onclick="downloadPlan()">Download as PDF</button>
+        </div>
+        <div id="planContent" class="plan-content"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('studyPlanForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const form = e.target;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const btnText = submitBtn.querySelector('.btn-text');
+    const btnLoader = submitBtn.querySelector('.btn-loader');
+    
+    // Get form data
+    const subjectsText = document.getElementById('list_of_subjects').value;
+    const subjects = subjectsText.split(',').map(s => s.trim()).filter(s => s);
+    
+    const formData = {
+        student_name: document.getElementById('student_name').value,
+        field_of_study: document.getElementById('field_of_study').value,
+        year_of_study: document.getElementById('year_of_study').value,
+        list_of_subjects: subjects,
+        preferred_learning_styles: document.getElementById('preferred_learning_styles').value,
+        personal_objectives: document.getElementById('personal_objectives').value,
+        challenges: document.getElementById('challenges').value,
+        extracurricular_activities: document.getElementById('extracurricular_activities').value
+    };
+    
+    // Show loading
+    btnText.style.display = 'none';
+    btnLoader.style.display = 'inline';
+    submitBtn.disabled = true;
+    
+    try {
+        const response = await fetch('/api/study-plan/generate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('planContent').innerHTML = marked.parse(data.plan);
+            document.getElementById('resultSection').style.display = 'block';
+            document.getElementById('resultSection').scrollIntoView({ behavior: 'smooth' });
+        } else {
+            alert('Error: ' + (data.error || 'Failed to generate plan'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        btnText.style.display = 'inline';
+        btnLoader.style.display = 'none';
+        submitBtn.disabled = false;
+    }
+});
+
+function downloadPlan() {
+    const content = document.getElementById('planContent').innerText;
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'study-plan.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+{% endblock %}
+
